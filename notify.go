@@ -16,7 +16,7 @@ type UrlRequestTask struct {
 	wg                *sync.WaitGroup
 
 	mFailure     *sync.Mutex
-	failureError error
+	FailureError error
 }
 
 func (t *UrlRequestTask) Execute() error {
@@ -52,7 +52,7 @@ func (t *UrlRequestTask) OnFailure(err error) {
 	t.mFailure.Lock()
 	defer t.mFailure.Unlock()
 
-	t.failureError = err
+	t.FailureError = err
 }
 
 type MessageSender struct {
