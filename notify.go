@@ -30,7 +30,6 @@ func (t *UrlRequestTask) Execute() error {
 	}
 
 	r.Header.Add("Content-Type", "text/plain")
-
 	client := &http.Client{Timeout: t.timeout}
 	res, err := client.Do(r)
 	if err != nil {
@@ -38,12 +37,15 @@ func (t *UrlRequestTask) Execute() error {
 	}
 
 	defer res.Body.Close()
-
 	if res.StatusCode != t.successStatusCode {
-		return fmt.Errorf("status code: %w", err)
+		return fmt.Errorf("status code: %v", res.StatusCode)
 	}
 
 	return nil
+}
+
+func (t *UrlRequestTask) OnDone() {
+	//t.done <- true
 }
 
 func (t *UrlRequestTask) OnFailure(err error) {
@@ -68,20 +70,26 @@ func NewMessageSender(url string, successStatusCode int, workers int) (*MessageS
 	}
 	sc := successStatusCode
 	if sc == 0 {
-		sc = http.StatusCreated
+		sc = http.StatusOK
 	}
 	return &MessageSender{url: url, successStatusCode: sc, wg: &sync.WaitGroup{}, pool: pool}, nil
 }
 
 func (m *MessageSender) Send(message string, timeout time.Duration) *UrlRequestTask {
 	task := &UrlRequestTask{
-		url:      m.url,
-		message:  message,
-		timeout:  timeout,
-		wg:       m.wg,
-		mFailure: &sync.Mutex{},
+		url:               m.url,
+		message:           message,
+		timeout:           timeout,
+		successStatusCode: m.successStatusCode,
+		wg:                m.wg,
+		mFailure:          &sync.Mutex{},
 	}
 	m.wg.Add(1)
 	m.pool.AddTask(task)
 	return task
+}
+
+func (m *MessageSender) StopAndWait() {
+	m.pool.Stop()
+	m.wg.Wait()
 }

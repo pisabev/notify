@@ -52,6 +52,7 @@ func TestWorkerPool_Work(t *testing.T) {
 type testTask struct {
 	wg           *sync.WaitGroup
 	mFailure     *sync.Mutex
+	done         chan bool
 	failureError error
 }
 
@@ -59,6 +60,7 @@ func newTestTask(wg *sync.WaitGroup) *testTask {
 	return &testTask{
 		wg:       wg,
 		mFailure: &sync.Mutex{},
+		done:     make(chan bool),
 	}
 }
 
@@ -68,6 +70,10 @@ func (t *testTask) Execute() error {
 	}
 
 	return nil
+}
+
+func (t *testTask) OnDone() {
+	t.done <- true
 }
 
 func (t *testTask) OnFailure(err error) {

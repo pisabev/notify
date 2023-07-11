@@ -23,6 +23,7 @@ type Task interface {
 	Execute() error
 	// OnFailure handles any error returned from Execute()
 	OnFailure(error)
+	OnDone()
 }
 
 type TaskPool struct {
