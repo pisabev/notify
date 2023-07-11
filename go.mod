@@ -1,4 +1,4 @@
-module notify
+module github.com/pisabev/notify
 
 go 1.20
 
