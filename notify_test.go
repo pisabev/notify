@@ -16,50 +16,72 @@ func TestMessageSender_NewMessageSender(t *testing.T) {
 }
 
 func TestMessageSender_Send(t *testing.T) {
-	message := "test"
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		assert.Equal(t, message, string(b))
-	}))
-	defer ts.Close()
-
-	ms, err := NewMessageSender(ts.URL, http.StatusOK, 10)
-	assert.NoError(t, err)
-
-	var tasks []*UrlRequestTask
-
-	tasks = append(tasks, ms.Send(message, 0))
-
-	ms.wg.Wait()
-
-	for _, task := range tasks {
-		assert.NoError(t, task.failureError)
+	type tc struct {
+		Name          string
+		Messages      []string
+		Workers       int
+		ResponseCode  int
+		TimeOut       time.Duration
+		ResponseDelay time.Duration
 	}
-}
+	cases := []tc{
+		{
+			Name:          "test send message",
+			Messages:      []string{"test1", "test2", "test3", "test4"},
+			Workers:       4,
+			ResponseCode:  http.StatusOK,
+			TimeOut:       time.Millisecond * 1,
+			ResponseDelay: time.Millisecond * 0,
+		},
+		{
+			Name:          "test send message with timeout",
+			Messages:      []string{"test1", "test2", "test3", "test4"},
+			Workers:       4,
+			ResponseCode:  http.StatusOK,
+			TimeOut:       time.Millisecond * 1,
+			ResponseDelay: time.Millisecond * 2,
+		},
+		{
+			Name:          "test send message with status created",
+			Messages:      []string{"test1", "test2", "test3", "test4"},
+			Workers:       1,
+			ResponseCode:  http.StatusCreated,
+			TimeOut:       time.Millisecond * 1,
+			ResponseDelay: time.Millisecond * 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				w.WriteHeader(tc.ResponseCode)
+				_, err = w.Write(b)
+				assert.NoError(t, err)
+				time.Sleep(tc.ResponseDelay)
+			}))
+			defer ts.Close()
 
-func TestMessageSender_SendTimeout(t *testing.T) {
-	message := "test"
+			ms, err := NewMessageSender(ts.URL, tc.ResponseCode, tc.Workers)
+			assert.NoError(t, err)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(time.Second * 2)
-		b, err := io.ReadAll(r.Body)
-		assert.NoError(t, err)
-		assert.Equal(t, message, string(b))
-	}))
-	defer ts.Close()
+			var tasks []*UrlRequestTask
+			for _, m := range tc.Messages {
+				func(sendMessage string, response int, delay, timeout time.Duration) {
+					tasks = append(tasks, ms.Send(sendMessage, timeout, func(task *UrlRequestTask) {
+						// If we hit timeout
+						if delay > timeout {
+							assert.Error(t, task.RError)
+						} else { // Normal execution
+							assert.Equal(t, tc.ResponseCode, task.RCode)
+							assert.Equal(t, sendMessage, task.RMessage)
+						}
+					}))
+				}(m, tc.ResponseCode, tc.ResponseDelay, tc.TimeOut)
+			}
 
-	ms, err := NewMessageSender(ts.URL, http.StatusOK, 10)
-	assert.NoError(t, err)
-
-	var tasks []*UrlRequestTask
-
-	tasks = append(tasks, ms.Send(message, time.Second*1))
-
-	ms.wg.Wait()
-
-	for _, task := range tasks {
-		assert.Error(t, task.failureError)
+			// Wait to finish
+			ms.Stop(true)
+		})
 	}
 }

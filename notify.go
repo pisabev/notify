@@ -3,8 +3,8 @@ package notify
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -13,52 +13,55 @@ type UrlRequestTask struct {
 	message           string
 	timeout           time.Duration
 	successStatusCode int
-	wg                *sync.WaitGroup
 
-	mFailure     *sync.Mutex
-	FailureError error
+	// Set on response - use in doneFunc
+	RError   error
+	RCode    int
+	RMessage string
+
+	doneFunc func(*UrlRequestTask)
 }
 
-func (t *UrlRequestTask) Execute() error {
-	if t.wg != nil {
-		defer t.wg.Done()
-	}
-
+func (t *UrlRequestTask) Execute() {
 	r, err := http.NewRequest("POST", t.url, bytes.NewBuffer([]byte(t.message)))
 	if err != nil {
-		return fmt.Errorf("request: %w", err)
+		t.RError = fmt.Errorf("request: %w", err)
+		return
 	}
 
 	r.Header.Add("Content-Type", "text/plain")
 	client := &http.Client{Timeout: t.timeout}
 	res, err := client.Do(r)
 	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+		t.RError = fmt.Errorf("do request: %w", err)
+		return
 	}
 
 	defer res.Body.Close()
 	if res.StatusCode != t.successStatusCode {
-		return fmt.Errorf("status code: %v", res.StatusCode)
+		t.RError = fmt.Errorf("status code: %v", res.StatusCode)
+		return
 	}
 
-	return nil
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.RError = fmt.Errorf("response read: %w", err)
+		return
+	}
+
+	t.RMessage = string(b)
+	t.RCode = res.StatusCode
 }
 
 func (t *UrlRequestTask) OnDone() {
-	//t.done <- true
-}
-
-func (t *UrlRequestTask) OnFailure(err error) {
-	t.mFailure.Lock()
-	defer t.mFailure.Unlock()
-
-	t.FailureError = err
+	if t.doneFunc != nil {
+		t.doneFunc(t)
+	}
 }
 
 type MessageSender struct {
 	url               string
 	successStatusCode int
-	wg                *sync.WaitGroup
 	pool              Pool
 }
 
@@ -72,24 +75,21 @@ func NewMessageSender(url string, successStatusCode int, workers int) (*MessageS
 	if sc == 0 {
 		sc = http.StatusOK
 	}
-	return &MessageSender{url: url, successStatusCode: sc, wg: &sync.WaitGroup{}, pool: pool}, nil
+	return &MessageSender{url: url, successStatusCode: sc, pool: pool}, nil
 }
 
-func (m *MessageSender) Send(message string, timeout time.Duration) *UrlRequestTask {
+func (m *MessageSender) Send(message string, timeout time.Duration, doneFunc func(*UrlRequestTask)) *UrlRequestTask {
 	task := &UrlRequestTask{
 		url:               m.url,
 		message:           message,
 		timeout:           timeout,
 		successStatusCode: m.successStatusCode,
-		wg:                m.wg,
-		mFailure:          &sync.Mutex{},
+		doneFunc:          doneFunc,
 	}
-	m.wg.Add(1)
 	m.pool.AddTask(task)
 	return task
 }
 
-func (m *MessageSender) StopAndWait() {
-	m.pool.Stop()
-	m.wg.Wait()
+func (m *MessageSender) Stop(wait bool) {
+	m.pool.Stop(wait)
 }
